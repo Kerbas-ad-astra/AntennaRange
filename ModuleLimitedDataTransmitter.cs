@@ -30,7 +30,9 @@ using KSP;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using ToadicusTools;
+using ToadicusTools.DebugTools;
+using ToadicusTools.Extensions;
+using ToadicusTools.Text;
 using UnityEngine;
 
 namespace AntennaRange
@@ -49,6 +51,11 @@ namespace AntennaRange
 	public class ModuleLimitedDataTransmitter
 		: ModuleDataTransmitter, IScienceDataTransmitter, IAntennaRelay, IModuleInfo
 	{
+		private const string tooltipSkinName = "PartTooltipSkin";
+		private static GUISkin partTooltipSkin;
+		private static GUIStyle partTooltipBodyStyle;
+		private static GUIStyle partTooltipHeaderStyle;
+
 		// Stores the packetResourceCost as defined in the .cfg file.
 		private float _basepacketResourceCost;
 
@@ -177,7 +184,7 @@ namespace AntennaRange
 				else
 				{
 					this.LogError("Vessel and/or part reference are null, returning null vessel.");
-					this.LogError(new System.Diagnostics.StackTrace().ToString());
+					// this.LogError(new System.Diagnostics.StackTrace().ToString());
 					return null;
 				}
 			}
@@ -423,20 +430,19 @@ namespace AntennaRange
 			this._basepacketResourceCost = base.packetResourceCost;
 			this.moduleInfoContent = new GUIContent();
 
-			Tools.PostDebugMessage(string.Format(
-				"{0} loaded:\n" +
+			this.LogDebug("{0} loaded:\n" +
 				"packetSize: {1}\n" +
 				"packetResourceCost: {2}\n" +
 				"nominalTransmitDistance: {3}\n" +
 				"maxPowerFactor: {4}\n" +
 				"maxDataFactor: {5}\n",
-				this.name,
+				this,
 				base.packetSize,
 				this._basepacketResourceCost,
 				this.nominalTransmitDistance,
 				this.maxPowerFactor,
 				this.maxDataFactor
-			));
+			);
 		}
 
 		/// <summary>
@@ -447,7 +453,7 @@ namespace AntennaRange
 		{
 			base.OnStart (state);
 
-			this.maxTransmitDistance = Math.Sqrt(this.maxPowerFactor) * this.nominalTransmitDistance;
+			this.RecalculateMaxRange();
 
 			if (state >= StartState.PreLaunch)
 			{
@@ -455,7 +461,7 @@ namespace AntennaRange
 				this.relay.nominalTransmitDistance = this.nominalTransmitDistance;
 				this.relay.maxTransmitDistance = this.maxTransmitDistance;
 
-				this.UImaxTransmitDistance = string.Format(Tools.SIFormatter, "{0:S3}m", this.maxTransmitDistance);
+				this.UImaxTransmitDistance = TextTools.Format("{0:S3}m", this.maxTransmitDistance);
 
 				GameEvents.onPartActionUICreate.Add(this.onPartActionUICreate);
 				GameEvents.onPartActionUIDismiss.Add(this.onPartActionUIDismiss);
@@ -475,7 +481,7 @@ namespace AntennaRange
 
 			base.OnLoad (node);
 
-			this.maxTransmitDistance = Math.Sqrt(this.maxPowerFactor) * this.nominalTransmitDistance;
+			this.RecalculateMaxRange();
 		}
 
 		/// <summary>
@@ -500,21 +506,45 @@ namespace AntennaRange
 		{
 			this.moduleInfoContent.text = this.GetInfo();
 
-			GUIStyle style0 = PartListTooltips.fetch.tooltipSkin.customStyles[0];
-			GUIStyle style1 = PartListTooltips.fetch.tooltipSkin.customStyles[1];
+			if (partTooltipSkin == null)
+			{
+				UnityEngine.Object[] skins = Resources.FindObjectsOfTypeAll(typeof(GUISkin));
+				GUISkin skin;
+				for (int sIdx = 0; sIdx < skins.Length; sIdx++)
+				{
+					skin = (GUISkin)skins[sIdx];
+
+					if (skin.name == tooltipSkinName)
+					{
+						partTooltipSkin = skin;
+						partTooltipBodyStyle = partTooltipSkin.customStyles[0];
+						partTooltipHeaderStyle = partTooltipSkin.customStyles[1];
+					}
+				}
+
+				if (partTooltipSkin == null)
+				{
+					this.LogError("Could not find GUISkin {0}?  Please report this!", tooltipSkinName);
+					return;
+				}
+				else
+				{
+					this.Log("Loaded GUISkin {0}", tooltipSkinName);
+				}
+			}
 
 			float width = rect.width;
 			float orgHeight = rect.height;
-			float height = style0.CalcHeight(this.moduleInfoContent, width);
+			float height = partTooltipBodyStyle.CalcHeight(this.moduleInfoContent, width);
 
 			rect.height = height;
 
-			GUI.Box(rect, this.moduleInfoContent, style0);
-			GUI.Label(rect, this.GetModuleTitle(), style1);
+			GUI.Box(rect, this.moduleInfoContent, partTooltipBodyStyle);
+			GUI.Label(rect, this.GetModuleTitle(), partTooltipHeaderStyle);
 
 			GUILayout.Space(height - orgHeight
-				- style0.padding.bottom - style0.padding.top
-				- 2f * (style0.margin.bottom + style0.margin.top)
+				- partTooltipBodyStyle.padding.bottom - partTooltipBodyStyle.padding.top
+				- 2f * (partTooltipBodyStyle.margin.bottom + partTooltipBodyStyle.margin.top)
 			);
 		}
 
@@ -531,34 +561,34 @@ namespace AntennaRange
 		/// </summary>
 		public override string GetInfo()
 		{
-			StringBuilder sb = Tools.GetStringBuilder();
-			string text;
-
-			sb.Append(base.GetInfo());
-
-			if (ARConfiguration.UseAdditiveRanges)
+			using (PooledStringBuilder sb = PooledStringBuilder.Get())
 			{
-				sb.AppendFormat(Tools.SIFormatter, "Nominal Range to Kerbin: {0:S3}m\n",
-					Math.Sqrt(this.nominalTransmitDistance * ARConfiguration.KerbinNominalRange)
-				);
-				sb.AppendFormat(Tools.SIFormatter, "Maximum Range to Kerbin: {0:S3}m",
-					Math.Sqrt(
-						this.nominalTransmitDistance * Math.Sqrt(this.maxPowerFactor) *
-						ARConfiguration.KerbinRelayRange
-					)
-				);
+				string text;
+
+				sb.Append(base.GetInfo());
+
+				if (ARConfiguration.UseAdditiveRanges)
+				{
+					sb.AppendFormat("Nominal Range to Kerbin: {0:S3}m\n",
+						Math.Sqrt(this.nominalTransmitDistance * ARConfiguration.KerbinNominalRange)
+					);
+					sb.AppendFormat("Maximum Range to Kerbin: {0:S3}m",
+						Math.Sqrt(
+							this.nominalTransmitDistance * Math.Sqrt(this.maxPowerFactor) *
+							ARConfiguration.KerbinRelayRange
+						)
+					);
+				}
+				else
+				{
+					sb.AppendFormat("Nominal Range: {0:S3}m\n", this.nominalTransmitDistance);
+					sb.AppendFormat("Maximum Range: {0:S3}m", this.maxTransmitDistance);
+				}
+
+				text = sb.ToString();
+
+				return text;
 			}
-			else
-			{
-				sb.AppendFormat(Tools.SIFormatter, "Nominal Range: {0:S3}m\n", this.nominalTransmitDistance);
-				sb.AppendFormat(Tools.SIFormatter, "Maximum Range: {0:S3}m", this.maxTransmitDistance);
-			}
-
-			text = sb.ToString();
-
-			Tools.PutStringBuilder(sb);
-
-			return text;
 		}
 
 		/// <summary>
@@ -576,13 +606,13 @@ namespace AntennaRange
 			{
 				case PartStates.DEAD:
 				case PartStates.DEACTIVATED:
-					Tools.PostDebugMessage(string.Format(
+					this.LogDebug(
 						"{0}: {1} on {2} cannot transmit: {3}",
 						this.GetType().Name,
 						this.part.partInfo.title,
 						this.vessel.vesselName,
 						Enum.GetName(typeof(PartStates), this.part.State)
-					));
+					);
 					return false;
 				default:
 					break;
@@ -607,8 +637,7 @@ namespace AntennaRange
 		/// returns false.
 		/// </summary>
 		/// <param name="dataQueue">List of <see cref="ScienceData"/> to transmit.</param>
-		/// <param name="callback">Callback function</param>
-		public new void TransmitData(List<ScienceData> dataQueue, Callback callback)
+		public new void TransmitData(List<ScienceData> dataQueue)
 		{
 			this.LogDebug(
 				"TransmitData(List<ScienceData> dataQueue, Callback callback) called.  dataQueue.Count={0}",
@@ -626,24 +655,16 @@ namespace AntennaRange
 
 				this.LogDebug(
 					"CanTransmit in TransmitData, calling base.TransmitData with dataQueue=[{0}] and callback={1}",
-					dataQueue.SPrint(),
-					callback == null ? "null" : callback.ToString()
+					dataQueue.SPrint()
 				);
 
-				if (callback == null)
-				{
-					base.TransmitData(dataQueue);
-				}
-				else
-				{
-					base.TransmitData(dataQueue, callback);
-				}
+				base.TransmitData(dataQueue);
 			}
 			else
 			{
-				Tools.PostDebugMessage(this, "{0} unable to transmit during TransmitData.", this.part.partInfo.title);
+				this.LogDebug("{0} unable to transmit during TransmitData.", this.part.partInfo.title);
 
-				var logger = Tools.DebugLogger.New(this);
+				var logger = PooledDebugLogger.New(this);
 
 				IList<ModuleScienceContainer> vesselContainers = this.vessel.getModulesOfType<ModuleScienceContainer>();
 				ModuleScienceContainer scienceContainer;
@@ -699,50 +720,34 @@ namespace AntennaRange
 
 				if (dataQueue.Count > 0)
 				{
-					StringBuilder sb = Tools.GetStringBuilder();
-
-					sb.Append('[');
-					sb.Append(this.part.partInfo.title);
-					sb.AppendFormat("]: {0} data items could not be saved: no space available in data containers.\n");
-					sb.Append("Data to be discarded:\n");
-
-					ScienceData data;
-					for (int dIdx = 0; dIdx < dataQueue.Count; dIdx++)
+					using (PooledStringBuilder sb = PooledStringBuilder.Get())
 					{
-						data = dataQueue[dIdx];
-						sb.AppendFormat("\t{0}\n", data.title);
+						sb.Append('[');
+						sb.Append(this.part.partInfo.title);
+						sb.AppendFormat("]: {0} data items could not be saved: no space available in data containers.\n");
+						sb.Append("Data to be discarded:\n");
+
+						ScienceData data;
+						for (int dIdx = 0; dIdx < dataQueue.Count; dIdx++)
+						{
+							data = dataQueue[dIdx];
+							sb.AppendFormat("\t{0}\n", data.title);
+						}
+
+						ScreenMessages.PostScreenMessage(sb.ToString(), 4f, ScreenMessageStyle.UPPER_LEFT);
+
+						this.LogDebug(sb.ToString());
 					}
-
-					ScreenMessages.PostScreenMessage(sb.ToString(), 4f, ScreenMessageStyle.UPPER_LEFT);
-
-					Tools.PostDebugMessage(sb.ToString());
-
-					Tools.PutStringBuilder(sb);
 				}
 
 				this.PostCannotTransmitError();
 			}
 
-			Tools.PostDebugMessage (
+			this.LogDebug(
 				"distance: " + this.CurrentLinkSqrDistance
 				+ " packetSize: " + this.packetSize
 				+ " packetResourceCost: " + this.packetResourceCost
 			);
-		}
-
-		/// <summary>
-		/// Override ModuleDataTransmitter.TransmitData to check against CanTransmit and fail out when CanTransmit
-		/// returns false.
-		/// </summary>
-		/// <param name="dataQueue">List of <see cref="ScienceData"/> to transmit.</param>
-		public new void TransmitData(List<ScienceData> dataQueue)
-		{
-			this.LogDebug(
-				"TransmitData(List<ScienceData> dataQueue) called, dataQueue.Count={0}",
-				dataQueue.Count
-			);
-
-			this.TransmitData(dataQueue, null);
 		}
 
 		/// <summary>
@@ -756,7 +761,7 @@ namespace AntennaRange
 			PreTransmit_SetPacketSize ();
 			PreTransmit_SetPacketResourceCost ();
 
-			Tools.PostDebugMessage (
+			this.LogDebug(
 				"distance: " + this.CurrentLinkSqrDistance
 				+ " packetSize: " + this.packetSize
 				+ " packetResourceCost: " + this.packetResourceCost
@@ -781,31 +786,31 @@ namespace AntennaRange
 		{
 			if (this.actionUIUpdate)
 			{
-				this.UImaxTransmitDistance = string.Format(Tools.SIFormatter, "{0:S3}m",
+				this.UImaxTransmitDistance = TextTools.Format("{0:S3}m",
 					Math.Sqrt(this.MaximumLinkSqrDistance));
-				this.UInominalLinkDistance = string.Format(Tools.SIFormatter, "{0:S3}m",
+				this.UInominalLinkDistance = TextTools.Format("{0:S3}m",
 					Math.Sqrt(this.NominalLinkSqrDistance));
 				
 				if (this.CanTransmit())
 				{
 					this.UIrelayStatus = this.LinkStatus.ToString();
-					this.UItransmitDistance = string.Format(Tools.SIFormatter, "{0:S3}m",
+					this.UItransmitDistance = TextTools.Format("{0:S3}m",
 						Math.Sqrt(this.CurrentLinkSqrDistance));
-					this.UIpacketSize = string.Format(Tools.SIFormatter, "{0:S3}MiT", this.DataRate);
-					this.UIpacketCost = string.Format(Tools.SIFormatter, "{0:S3}EC", this.DataResourceCost);
+					this.UIpacketSize = TextTools.Format("{0:S3}MiT", this.DataRate);
+					this.UIpacketCost = TextTools.Format("{0:S3}EC", this.DataResourceCost);
 				}
 				else
 				{
 					if (this.relay.firstOccludingBody == null)
 					{
-						this.UItransmitDistance = string.Format(Tools.SIFormatter, "{0:S3}m",
+						this.UItransmitDistance = TextTools.Format("{0:S3}m",
 							Math.Sqrt(this.CurrentLinkSqrDistance));
 						this.UIrelayStatus = "Out of range";
 					}
 					else
 					{
 						this.UItransmitDistance = "N/A";
-						this.UIrelayStatus = string.Format("Blocked by {0}", this.relay.firstOccludingBody.bodyName);
+						this.UIrelayStatus = TextTools.Format("Blocked by {0}", this.relay.firstOccludingBody.bodyName);
 					}
 					this.UIpacketSize = "N/A";
 					this.UIpacketCost = "N/A";
@@ -829,38 +834,54 @@ namespace AntennaRange
 			}
 		}
 
+		public void RecalculateMaxRange()
+		{
+			this.maxTransmitDistance = Math.Sqrt(this.maxPowerFactor) * this.nominalTransmitDistance;
+
+			#if DEBUG
+			this.Log("Recalculated max range: sqrt({0}) * {1} = {2}",
+				this.maxPowerFactor, this.nominalTransmitDistance, this.maxTransmitDistance);
+			#endif
+		}
+
 		/// <summary>
 		/// Returns a <see cref="System.String"/> that represents the current <see cref="AntennaRange.ModuleLimitedDataTransmitter"/>.
 		/// </summary>
 		/// <returns>A <see cref="System.String"/> that represents the current <see cref="AntennaRange.ModuleLimitedDataTransmitter"/>.</returns>
 		public override string ToString()
 		{
-			StringBuilder sb = Tools.GetStringBuilder();
-			string msg;
-
-			sb.Append(this.part.partInfo.title);
-
-			if (vessel != null)
+			using (PooledStringBuilder sb = PooledStringBuilder.Get())
 			{
-				sb.Append(" on ");
-				sb.Append(vessel.vesselName);
+				string msg;
+
+				if (this.part != null && this.part.partInfo != null)
+				{
+					sb.Append(this.part.partInfo.title);
+				}
+				else
+				{
+					sb.Append(this.GetType().Name);
+				}
+
+				if (vessel != null)
+				{
+					sb.Append(" on ");
+					sb.Append(vessel.vesselName);
+				}
+				else if (
+					this.part != null &&
+					this.part.protoPartSnapshot != null &&
+					this.part.protoPartSnapshot != null &&
+					this.part.protoPartSnapshot.pVesselRef != null)
+				{
+					sb.Append(" on ");
+					sb.Append(this.part.protoPartSnapshot.pVesselRef.vesselName);
+				}
+
+				msg = sb.ToString();
+
+				return msg;
 			}
-			else if (
-				this.part != null &&
-				this.part.protoPartSnapshot != null &&
-				this.part.protoPartSnapshot != null &&
-				this.part.protoPartSnapshot.pVesselRef != null
-			)
-			{
-				sb.Append(" on ");
-				sb.Append(this.part.protoPartSnapshot.pVesselRef.vesselName);
-			}
-
-			msg = sb.ToString();
-
-			Tools.PutStringBuilder(sb);
-
-			return msg;
 		}
 
 		// When we catch an onPartActionUICreate event for our part, go ahead and update every frame to look pretty.
@@ -896,7 +917,7 @@ namespace AntennaRange
 				ErrorText
 			);
 
-			Tools.PostDebugMessage(this.GetType().Name + ": " + this.ErrorMsg.message);
+			this.LogDebug(this.ErrorMsg.message);
 
 			ScreenMessages.PostScreenMessage(this.ErrorMsg, false);
 		}
@@ -943,30 +964,30 @@ namespace AntennaRange
 
 		private string buildTransmitMessage()
 		{
-			StringBuilder sb = Tools.GetStringBuilder();
-			string msg;
-
-			sb.Append("[");
-			sb.Append(base.part.partInfo.title);
-			sb.Append("]: ");
-
-			sb.Append("Beginning transmission ");
-
-			if (this.KerbinDirect)
+			using (PooledStringBuilder sb = PooledStringBuilder.Get())
 			{
-				sb.Append("directly to Kerbin.");
+				string msg;
+
+				sb.Append("[");
+				sb.Append(base.part.partInfo.title);
+				sb.Append("]: ");
+
+				sb.Append("Beginning transmission ");
+
+				if (this.KerbinDirect)
+				{
+					sb.Append("directly to Kerbin.");
+				}
+				else
+				{
+					sb.Append("via ");
+					sb.Append(this.relay.targetRelay);
+				}
+
+				msg = sb.ToString();
+
+				return msg;
 			}
-			else
-			{
-				sb.Append("via ");
-				sb.Append(this.relay.targetRelay);
-			}
-
-			msg = sb.ToString();
-
-			Tools.PutStringBuilder(sb);
-
-			return msg;
 		}
 
 		#if DEBUG
@@ -983,27 +1004,26 @@ namespace AntennaRange
 		[KSPEvent (guiName = "Dump Vessels", active = true, guiActive = true)]
 		public void PrintAllVessels()
 		{
-			StringBuilder sb = Tools.GetStringBuilder();
-			
-			sb.Append("Dumping FlightGlobals.Vessels:");
-
-			Vessel vessel;
-			for (int i = 0; i < FlightGlobals.Vessels.Count; i++)
+			using (PooledStringBuilder sb = PooledStringBuilder.Get())
 			{
-				vessel = FlightGlobals.Vessels[i];
-				sb.AppendFormat("\n'{0} ({1})'", vessel.vesselName, vessel.id);
-			}
-		    
-			Tools.PostDebugMessage(sb.ToString());
+				sb.Append("Dumping FlightGlobals.Vessels:");
 
-			Tools.PutStringBuilder(sb);
+				Vessel vessel;
+				for (int i = 0; i < FlightGlobals.Vessels.Count; i++)
+				{
+					vessel = FlightGlobals.Vessels[i];
+					sb.AppendFormat("\n'{0} ({1})'", vessel.vesselName, vessel.id);
+				}
+		    
+				ToadicusTools.Logging.PostDebugMessage(sb.ToString());
+			}
 		}
 		 
-		[KSPEvent (guiName = "Dump RelayDB", active = true, guiActive = true)]
+		/*[KSPEvent (guiName = "Dump RelayDB", active = true, guiActive = true)]
 		public void DumpRelayDB()
 		{
 			RelayDatabase.Instance.Dump();
-		}
+		}*/
 		#endif
 	}
 }
