@@ -144,6 +144,79 @@ namespace AntennaRange
 		}
 
 		/// <summary>
+		/// Returns the square of the maximum link range between two relays.
+		/// </summary>
+		/// <returns>The maximum link range between two relays.</returns>
+		/// <param name="relayOne">Relay one.</param>
+		/// <param name="relayTwo">Relay two.</param>
+		public static double MaxLinkSqrDistanceTo(this AntennaRelay relayOne, IAntennaRelay relayTwo)
+		{
+			if (ARConfiguration.UseAdditiveRanges)
+			{
+				return relayOne.maxTransmitDistance * relayTwo.maxTransmitDistance;
+			}
+			else
+			{
+				return relayOne.maxTransmitDistance * relayOne.maxTransmitDistance;
+			}
+		}
+
+		/// <summary>
+		/// Returns the square of the maximum link range between a relay and Kerbin.
+		/// </summary>
+		/// <returns>The maximum link range between a relay and Kerbin.</returns>
+		/// <param name="relayOne">Relay one.</param>
+		/// <param name="body">A CelestialBody (must be Kerbin).</param>
+		public static double MaxLinkSqrDistanceTo(this AntennaRelay relayOne, CelestialBody body)
+		{
+			if (body != AntennaRelay.Kerbin)
+			{
+				return 0d;
+			}
+
+			if (ARConfiguration.UseAdditiveRanges)
+			{
+				return relayOne.maxTransmitDistance * ARConfiguration.KerbinRelayRange;
+			}
+			else
+			{
+				return relayOne.maxTransmitDistance * relayOne.maxTransmitDistance;
+			}
+		}
+
+		/// <summary>
+		/// Determines if relayOne is in range of the specified relayTwo.
+		/// </summary>
+		/// <returns><c>true</c> if relayOne is in range of the specifie relayTwo; otherwise, <c>false</c>.</returns>
+		/// <param name="relayOne">Relay one.</param>
+		/// <param name="relayTwo">Relay two.</param>
+		public static bool IsInRangeOf(this AntennaRelay relayOne, IAntennaRelay relayTwo)
+		{
+			if (relayOne == null || relayTwo == null)
+			{
+				return false;
+			}
+
+			return relayOne.SqrDistanceTo(relayTwo) <= relayOne.MaxLinkSqrDistanceTo(relayTwo);
+		}
+
+		/// <summary>
+		/// Determines if relayOne is in range of the specified body.
+		/// </summary>
+		/// <returns><c>true</c> if relayOne is in range of the specified body; otherwise, <c>false</c>.</returns>
+		/// <param name="relayOne">Relay one.</param>
+		/// <param name="body">Body.</param>
+		public static bool IsInRangeOf(this AntennaRelay relayOne, CelestialBody body)
+		{
+			if (relayOne == null || body == null)
+			{
+				return false;
+			}
+
+			return relayOne.SqrDistanceTo(body) <= relayOne.MaxLinkSqrDistanceTo(body);
+		}
+
+		/// <summary>
 		/// Returns all of the PartModules or ProtoPartModuleSnapshots implementing IAntennaRelay in this Vessel.
 		/// </summary>
 		/// <param name="vessel">This <see cref="Vessel"/></param>
@@ -270,7 +343,13 @@ namespace AntennaRange
 		[System.Diagnostics.Conditional("DEBUG")]
 		public static void LogDebug(this AntennaRelay relay, string format, params object[] args)
 		{
-			ToadicusTools.Logging.PostDebugMessage(string.Format("[{0}] {1}", relay.ToString(), format), args);
+			using (var sb = ToadicusTools.Text.PooledStringBuilder.Get())
+			{
+				sb.AppendFormat("[{0}] ", relay == null ? "NULL" : relay.ToString());
+				sb.AppendFormat(format, args);
+
+				ToadicusTools.Logging.PostDebugMessage(sb.ToString());
+			}
 		}
 
 		/// <summary>
@@ -279,7 +358,13 @@ namespace AntennaRange
 		[System.Diagnostics.Conditional("DEBUG")]
 		public static void LogDebug(this AntennaRelay relay, string msg)
 		{
-			ToadicusTools.Logging.PostDebugMessage("[{0}] {1}", relay.ToString(), msg);
+			using (var sb = ToadicusTools.Text.PooledStringBuilder.Get())
+			{
+				sb.AppendFormat("[{0}] ", relay == null ? "NULL" : relay.ToString());
+				sb.Append(msg);
+
+				ToadicusTools.Logging.PostDebugMessage(sb.ToString());
+			}
 		}
 	}
 

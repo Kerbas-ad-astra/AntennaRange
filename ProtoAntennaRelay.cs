@@ -73,6 +73,69 @@ namespace AntennaRange
 		}
 
 		/// <summary>
+		/// Gets the base link resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The base link resource rate in EC/MiT.</value>
+		public RelayDataCost BaseLinkCost
+		{
+			get;
+			private set;
+		}
+
+		/// <summary>
+		/// Override ModuleDataTransmitter.DataResourceCost to just return packetResourceCost, because we want antennas
+		/// to be scored in terms of joules/byte
+		/// </summary>
+		public double DataResourceCost
+		{
+			get
+			{
+				if (this.CanTransmit())
+				{
+					return this.moduleRef.DataResourceCost;
+				}
+				else
+				{
+					return float.PositiveInfinity;
+				}
+			}
+		}
+
+		/// <summary>
+		/// Gets the packet throttle.
+		/// </summary>
+		/// <value>The packet throttle in range [0..100].</value>
+		public float PacketThrottle
+		{
+			get
+			{
+				if (this.moduleRef == null)
+				{
+					return float.NaN;
+				}
+
+				return this.moduleRef.PacketThrottle;
+			}
+		}
+
+		/// <summary>
+		/// Gets the max data factor.
+		/// </summary>
+		/// <value>The max data factor.</value>
+		public float MaxDataFactor
+		{
+			get
+			{
+				if (this.moduleRef == null)
+				{
+					return float.NaN;
+				}
+
+				return this.moduleRef.MaxDataFactor;
+			}
+		}
+
+		/// <summary>
 		/// Gets the nominal transmit distance at which the Antenna behaves just as prescribed by Squad's config.
 		/// </summary>
 		public override double nominalTransmitDistance
@@ -132,6 +195,9 @@ namespace AntennaRange
 			return base.CanTransmit();
 		}
 
+		/// <summary>
+		/// Recalculates the max range; useful for making sure we're using additive ranges when enabled.
+		/// </summary>
 		public void RecalculateMaxRange()
 		{
 			if (this.moduleRef != null)
@@ -152,6 +218,10 @@ namespace AntennaRange
 
 				if (this.protoPart != null && this.protoPart.pVesselRef != null)
 				{
+					#if DEBUG
+					sb.Append('#');
+					sb.Append(this.protoPart.flightID);
+					#endif
 					sb.AppendFormat(" on {0}", this.protoPart.pVesselRef.vesselName);
 				}
 

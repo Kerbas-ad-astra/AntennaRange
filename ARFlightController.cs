@@ -29,6 +29,7 @@
 #pragma warning disable 1591
 
 using KSP;
+using KSP.UI.Screens;
 using System;
 using System.Collections.Generic;
 using ToadicusTools.Extensions;
@@ -149,15 +150,15 @@ namespace AntennaRange
 			this.appLauncherTextures[ConnectionStatus.Optimal] =
 				GameDatabase.Instance.GetTexture("AntennaRange/Textures/appLauncherIcon", false);
 
-			if (ToolbarManager.ToolbarAvailable)
+			if (ToolbarManager.ToolbarAvailable && ARConfiguration.UseToolbarIfAvailable)
 			{
 				this.toolbarButton = ToolbarManager.Instance.add("AntennaRange", "ARConnectionStatus");
 
 				this.toolbarButton.TexturePath = this.toolbarTextures[ConnectionStatus.None];
 				this.toolbarButton.Text = "AntennaRange";
 				this.toolbarButton.Visibility = new GameScenesVisibility(GameScenes.FLIGHT);
-				this.toolbarButton.OnClick += (e) => (this.buttonToggle());
-			}
+                this.toolbarButton.OnClick += (e) => { this.buttonToggle(); };
+            }
 
 			GameEvents.onGameSceneLoadRequested.Add(this.onSceneChangeRequested);
 			GameEvents.onVesselChange.Add(this.onVesselChange);
@@ -172,7 +173,7 @@ namespace AntennaRange
 
 			VesselCommand availableCommand;
 
-			if (ARConfiguration.RequireConnectionForControl)
+			if (ARConfiguration.RequireConnectionForControl && this.vessel != null)
 			{
 				availableCommand = this.vessel.CurrentCommand();
 			}
@@ -317,6 +318,7 @@ namespace AntennaRange
 					log.AppendFormat("\n\tDoing target search for useful relay {0}", relay);
 
 					relay.FindNearestRelay();
+					relay.RecalculateTransmissionRates();
 				}
 
 				// Very last, find routes for the non-best relays on the active vessel.
@@ -333,6 +335,7 @@ namespace AntennaRange
 					log.AppendFormat("\nFinding nearest relay for active vessel relay {0}", relay);
 
 					relay.FindNearestRelay();
+					relay.RecalculateTransmissionRates();
 				}
 
 				if (this.toolbarButton != null || this.appLauncherButton != null)

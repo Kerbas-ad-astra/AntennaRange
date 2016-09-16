@@ -52,15 +52,6 @@ namespace AntennaRange
 		: ModuleDataTransmitter, IScienceDataTransmitter, IAntennaRelay, IModuleInfo
 	{
 		private const string tooltipSkinName = "PartTooltipSkin";
-		private static GUISkin partTooltipSkin;
-		private static GUIStyle partTooltipBodyStyle;
-		private static GUIStyle partTooltipHeaderStyle;
-
-		// Stores the packetResourceCost as defined in the .cfg file.
-		private float _basepacketResourceCost;
-
-		// Stores the packetSize as defined in the .cfg file.
-		private float _basepacketSize;
 
 		// Every antenna is a relay.
 		private AntennaRelay relay;
@@ -68,8 +59,17 @@ namespace AntennaRange
 		// Sometimes we will need to communicate errors; this is how we do it.
 		private ScreenMessage ErrorMsg;
 
-		// Used in module info panes for part tooltips in the editor and R&D
-		private GUIContent moduleInfoContent;
+		/// <summary>
+		/// The base size of a transmission packet, in MiT.
+		/// </summary>
+		[KSPField(isPersistant = false)]
+		public float basePacketSize;
+
+		/// <summary>
+		/// The base resource cost of a transmission packet, presumably in EC.
+		/// </summary>
+		[KSPField(isPersistant = false)]
+		public float basePacketResourceCost;
 
 		/// <summary>
 		/// When additive ranges are enabled, the distance from Kerbin at which the antenna will perform exactly as
@@ -184,9 +184,65 @@ namespace AntennaRange
 				else
 				{
 					this.LogError("Vessel and/or part reference are null, returning null vessel.");
-					// this.LogError(new System.Diagnostics.StackTrace().ToString());
+					#if DEBUG && VERBOSE
+					this.LogError(new System.Diagnostics.StackTrace().ToString());
+					#endif
 					return null;
 				}
+			}
+		}
+
+		private RelayDataCost _currentLinkCost = new RelayDataCost();
+		/// <summary>
+		/// Gets the current link resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The current link resource rate in EC/MiT.</value>
+		public RelayDataCost CurrentLinkCost
+		{
+			get
+			{
+				_currentLinkCost.PacketResourceCost = this.packetResourceCost;
+				_currentLinkCost.PacketSize = this.packetSize;
+				return _currentLinkCost;
+			}
+			set
+			{
+				this.packetResourceCost = value.PacketResourceCost;
+				this.packetSize = value.PacketSize;
+			}
+		}
+
+		/// <summary>
+		/// Gets the base link resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The base link resource rate in EC/MiT.</value>
+		public RelayDataCost BaseLinkCost
+		{
+			get;
+			private set;
+		}
+
+		/// <summary>
+		/// Gets the packet throttle.
+		/// </summary>
+		/// <value>The packet throttle in range [0..100].</value>
+		public float PacketThrottle
+		{
+			get
+			{
+				return this.packetThrottle;
+			}
+		}
+
+		/// <summary>
+		/// Gets the max data factor.
+		/// </summary>
+		/// <value>The max data factor.</value>
+		public float MaxDataFactor
+		{
+			get
+			{
+				return this.maxDataFactor;
 			}
 		}
 
@@ -359,8 +415,6 @@ namespace AntennaRange
 		{
 			get
 			{
-				this.PreTransmit_SetPacketSize();
-
 				if (this.CanTransmit())
 				{
 					return this.packetSize;
@@ -380,8 +434,6 @@ namespace AntennaRange
 		{
 			get
 			{
-				this.PreTransmit_SetPacketResourceCost();
-
 				if (this.CanTransmit())
 				{
 					return this.packetResourceCost;
@@ -390,6 +442,23 @@ namespace AntennaRange
 				{
 					return float.PositiveInfinity;
 				}
+			}
+		}
+
+		/// <summary>
+		/// Gets the current network resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The current network resource rate in EC/MiT.</value>
+		public RelayDataCost CurrentNetworkLinkCost
+		{
+			get
+			{
+				if (this.relay == null)
+				{
+					return RelayDataCost.Infinity;
+				}
+
+				return this.relay.CurrentNetworkLinkCost;
 			}
 		}
 
@@ -415,20 +484,17 @@ namespace AntennaRange
 		// Build ALL the objects.
 		public ModuleLimitedDataTransmitter () : base()
 		{
-			this.ErrorMsg = new ScreenMessage("", 4f, false, ScreenMessageStyle.UPPER_LEFT);
+			this.ErrorMsg = new ScreenMessage("", 4f, ScreenMessageStyle.UPPER_LEFT);
 			this.packetThrottle = 100f;
 		}
 
+		#if DEBUG
 		/// <summary>
 		/// PartModule OnAwake override; runs at Unity Awake.
 		/// </summary>
 		public override void OnAwake()
 		{
 			base.OnAwake();
-
-			this._basepacketSize = base.packetSize;
-			this._basepacketResourceCost = base.packetResourceCost;
-			this.moduleInfoContent = new GUIContent();
 
 			this.LogDebug("{0} loaded:\n" +
 				"packetSize: {1}\n" +
@@ -438,12 +504,13 @@ namespace AntennaRange
 				"maxDataFactor: {5}\n",
 				this,
 				base.packetSize,
-				this._basepacketResourceCost,
+				this.packetResourceCost,
 				this.nominalTransmitDistance,
 				this.maxPowerFactor,
 				this.maxDataFactor
 			);
 		}
+		#endif
 
 		/// <summary>
 		/// PartModule OnStart override; runs at Unity Start.
@@ -451,9 +518,10 @@ namespace AntennaRange
 		/// <param name="state">State.</param>
 		public override void OnStart (StartState state)
 		{
-			base.OnStart (state);
-
+			this.BaseLinkCost = new RelayDataCost(this.basePacketResourceCost, this.basePacketSize);
 			this.RecalculateMaxRange();
+
+			base.OnStart (state);
 
 			if (state >= StartState.PreLaunch)
 			{
@@ -481,6 +549,7 @@ namespace AntennaRange
 
 			base.OnLoad (node);
 
+			this.BaseLinkCost = new RelayDataCost(this.basePacketResourceCost, this.basePacketSize);
 			this.RecalculateMaxRange();
 		}
 
@@ -504,6 +573,9 @@ namespace AntennaRange
 		// HACK: Currently hacks around Squad's extraneous layout box, see KSPModders issue #5118
 		private void drawTooltipWidget(Rect rect)
 		{
+			/*
+			 * Removed all this because Squad doesn't even call it anymore.
+			 *
 			this.moduleInfoContent.text = this.GetInfo();
 
 			if (partTooltipSkin == null)
@@ -545,7 +617,7 @@ namespace AntennaRange
 			GUILayout.Space(height - orgHeight
 				- partTooltipBodyStyle.padding.bottom - partTooltipBodyStyle.padding.top
 				- 2f * (partTooltipBodyStyle.margin.bottom + partTooltipBodyStyle.margin.top)
-			);
+			);*/
 		}
 
 		/// <summary>
@@ -563,16 +635,12 @@ namespace AntennaRange
 		{
 			using (PooledStringBuilder sb = PooledStringBuilder.Get())
 			{
-				string text;
-
-				sb.Append(base.GetInfo());
-
 				if (ARConfiguration.UseAdditiveRanges)
 				{
-					sb.AppendFormat("Nominal Range to Kerbin: {0:S3}m\n",
+					sb.AppendFormat("<b>Nominal Range to Kerbin: </b>{0:S3}m\n",
 						Math.Sqrt(this.nominalTransmitDistance * ARConfiguration.KerbinNominalRange)
 					);
-					sb.AppendFormat("Maximum Range to Kerbin: {0:S3}m",
+					sb.AppendFormat("<b>Maximum Range to Kerbin: </b>{0:S3}m\n",
 						Math.Sqrt(
 							this.nominalTransmitDistance * Math.Sqrt(this.maxPowerFactor) *
 							ARConfiguration.KerbinRelayRange
@@ -581,13 +649,69 @@ namespace AntennaRange
 				}
 				else
 				{
-					sb.AppendFormat("Nominal Range: {0:S3}m\n", this.nominalTransmitDistance);
-					sb.AppendFormat("Maximum Range: {0:S3}m", this.maxTransmitDistance);
+					sb.AppendFormat("<b>Nominal Range: </b>{0:S3}m\n", this.nominalTransmitDistance);
+					sb.AppendFormat("<b>Maximum Range: </b>{0:S3}m\n", this.maxTransmitDistance);
 				}
 
-				text = sb.ToString();
+				sb.AppendLine();
 
-				return text;
+				sb.AppendFormat("<b>Nominal Packet Size: </b>{0:S2}iT\n", this.BaseLinkCost.PacketSize * 1000000f);
+				sb.AppendFormat(
+					"<b>Nominal Data Rate: </b>{0:S2}iT/sec\n",
+					this.BaseLinkCost.PacketSize / this.packetInterval * 1000000f
+				);
+
+				sb.AppendLine();
+
+				sb.AppendFormat("<b>Within Nominal Range...\n...Maximum Speedup:</b> {0:P0}\n", this.maxDataFactor);
+
+				if (ARConfiguration.FixedPowerCost)
+				{
+					sb.AppendLine();
+
+					sb.AppendFormat(
+						"<b>Outside Nominal Range...\n...Maximum Slowdown:</b> {0:P1}\n",
+						1f / this.maxPowerFactor
+					);
+
+					sb.AppendLine();
+
+					sb.AppendFormat(
+						"<b>Packet Cost:</b> {0:0.0#} {1}\n",
+						this.BaseLinkCost.PacketResourceCost,
+						this.requiredResource == "ElectricCharge" ? "EC" : this.requiredResource
+					);
+					sb.AppendFormat(
+						"<b>Power Drain:</b> {0:0.0#} {1}/s\n",
+						this.BaseLinkCost.PacketResourceCost / this.packetInterval,
+						this.requiredResource == "ElectricCharge" ? "EC" : this.requiredResource
+					);
+				}
+				else
+				{
+					sb.AppendLine();
+
+					sb.AppendFormat(
+						"<b>Nominal Packet Cost:</b> {0:0.0#} {1}\n",
+						this.BaseLinkCost.PacketResourceCost,
+						this.requiredResource == "ElectricCharge" ? "EC" : this.requiredResource
+					);
+					sb.AppendFormat(
+						"<b>Nominal Power Drain:</b> {0:0.0#} {1}/s\n",
+						this.BaseLinkCost.PacketResourceCost / this.packetInterval,
+						this.requiredResource == "ElectricCharge" ? "EC" : this.requiredResource
+					);
+
+					sb.AppendLine();
+
+					sb.AppendFormat(
+						"<b>Outside Nominal Range...\n...Maximum Power Drain:</b> {0:0.0#} {1}/s\n",
+						this.BaseLinkCost.PacketResourceCost / this.packetInterval * this.maxPowerFactor,
+						this.requiredResource == "ElectricCharge" ? "EC" : this.requiredResource
+					);
+				}
+
+				return sb.ToString();
 			}
 		}
 
@@ -622,6 +746,24 @@ namespace AntennaRange
 		}
 
 		/// <summary>
+		/// Recalculates the transmission rates.
+		/// </summary>
+		public void RecalculateTransmissionRates()
+		{
+			if (this.relay != null)
+			{
+				this.relay.RecalculateTransmissionRates();
+				this.LogDebug("Recalculated transmission rates in MLDT, cost is {0}", this.CurrentLinkCost);
+			}
+			#if DEBUG
+			else
+			{
+				this.LogDebug("Skipping recalculation; relay is null.");
+			}
+			#endif
+		}
+
+		/// <summary>
 		/// Finds the nearest relay.
 		/// </summary>
 		public void FindNearestRelay()
@@ -643,11 +785,6 @@ namespace AntennaRange
 				"TransmitData(List<ScienceData> dataQueue, Callback callback) called.  dataQueue.Count={0}",
 				dataQueue.Count
 			);
-
-			this.FindNearestRelay();
-
-			this.PreTransmit_SetPacketSize();
-			this.PreTransmit_SetPacketResourceCost();
 
 			if (this.CanTransmit())
 			{
@@ -756,11 +893,6 @@ namespace AntennaRange
 		/// </summary>
 		public new void StartTransmission()
 		{
-			this.FindNearestRelay();
-
-			PreTransmit_SetPacketSize ();
-			PreTransmit_SetPacketResourceCost ();
-
 			this.LogDebug(
 				"distance: " + this.CurrentLinkSqrDistance
 				+ " packetSize: " + this.packetSize
@@ -834,6 +966,9 @@ namespace AntennaRange
 			}
 		}
 
+		/// <summary>
+		/// Recalculates the max range; useful for making sure we're using additive ranges when enabled.
+		/// </summary>
 		public void RecalculateMaxRange()
 		{
 			this.maxTransmitDistance = Math.Sqrt(this.maxPowerFactor) * this.nominalTransmitDistance;
@@ -857,6 +992,10 @@ namespace AntennaRange
 				if (this.part != null && this.part.partInfo != null)
 				{
 					sb.Append(this.part.partInfo.title);
+					#if DEBUG
+					sb.Append('#');
+					sb.Append(this.part.flightID);
+					#endif
 				}
 				else
 				{
@@ -919,47 +1058,7 @@ namespace AntennaRange
 
 			this.LogDebug(this.ErrorMsg.message);
 
-			ScreenMessages.PostScreenMessage(this.ErrorMsg, false);
-		}
-
-		// Before transmission, set packetResourceCost.  Per above, packet cost increases with the square of
-		// distance.  packetResourceCost maxes out at _basepacketResourceCost * maxPowerFactor, at which point
-		// transmission fails (see CanTransmit).
-		private void PreTransmit_SetPacketResourceCost()
-		{
-			if (ARConfiguration.FixedPowerCost || this.CurrentLinkSqrDistance <= this.NominalLinkSqrDistance)
-			{
-				base.packetResourceCost = this._basepacketResourceCost;
-			}
-			else
-			{
-				float rangeFactor = (float)(this.CurrentLinkSqrDistance / this.NominalLinkSqrDistance);
-
-				base.packetResourceCost = this._basepacketResourceCost * rangeFactor;
-			}
-
-			base.packetResourceCost *= this.packetThrottle / 100f;
-		}
-
-		// Before transmission, set packetSize.  Per above, packet size increases with the inverse square of
-		// distance.  packetSize maxes out at _basepacketSize * maxDataFactor.
-		private void PreTransmit_SetPacketSize()
-		{
-			if (!ARConfiguration.FixedPowerCost && this.CurrentLinkSqrDistance >= this.NominalLinkSqrDistance)
-			{
-				base.packetSize = this._basepacketSize;
-			}
-			else
-			{
-				float rangeFactor = (float)(this.NominalLinkSqrDistance / this.CurrentLinkSqrDistance);
-
-				base.packetSize = Mathf.Min(
-					this._basepacketSize * rangeFactor,
-					this._basepacketSize * this.maxDataFactor
-				);
-			}
-
-			base.packetSize *= this.packetThrottle / 100f;
+			ScreenMessages.PostScreenMessage(this.ErrorMsg);
 		}
 
 		private string buildTransmitMessage()
@@ -995,8 +1094,8 @@ namespace AntennaRange
 		[KSPEvent (guiName = "Show Debug Info", active = true, guiActive = true)]
 		public void DebugInfo()
 		{
-			PreTransmit_SetPacketSize ();
-			PreTransmit_SetPacketResourceCost ();
+			if (this.relay != null)
+				this.relay.RecalculateTransmissionRates();
 
 			DebugPartModule.DumpClassObject(this);
 		}

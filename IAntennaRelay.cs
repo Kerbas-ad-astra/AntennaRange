@@ -47,6 +47,42 @@ namespace AntennaRange
 		IAntennaRelay targetRelay { get; }
 
 		/// <summary>
+		/// Gets the current link resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The current link resource rate in EC/MiT.</value>
+		RelayDataCost CurrentLinkCost { get; set; }
+
+		/// <summary>
+		/// Gets the base link resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The base link resource rate in EC/MiT.</value>
+		RelayDataCost BaseLinkCost { get; }
+
+		/// <summary>
+		/// Gets the packet throttle.
+		/// </summary>
+		/// <value>The packet throttle in range [0..100].</value>
+		float PacketThrottle { get; }
+
+		/// <summary>
+		/// Gets the max data factor.
+		/// </summary>
+		/// <value>The max data factor.</value>
+		float MaxDataFactor { get; }
+
+		/// <summary>
+		/// Gets the data resource cost in EC/MiT.
+		/// </summary>
+		/// <value>The data resource cost in EC/MiT.</value>
+		double DataResourceCost { get; }
+
+		/// <summary>
+		/// Gets the current network resource rate in EC/MiT.
+		/// </summary>
+		/// <value>The current network resource rate in EC/MiT.</value>
+		RelayDataCost CurrentNetworkLinkCost { get; }
+
+		/// <summary>
 		/// Gets a value indicating whether this <see cref="AntennaRange.IAntennaRelay"/> Relay is communicating
 		/// directly with Kerbin.
 		/// </summary>
@@ -56,7 +92,6 @@ namespace AntennaRange
 		/// The link distance, in meters, at which this relay behaves nominally.
 		/// </summary>
 		double NominalLinkSqrDistance { get; }
-
 
 		/// <summary>
 		/// The link distance, in meters, beyond which this relay cannot operate.
@@ -98,6 +133,11 @@ namespace AntennaRange
 		/// <c>true</c> if this instance can transmit; otherwise, <c>false</c>.
 		/// </summary>
 		bool CanTransmit();
+
+		/// <summary>
+		/// Recalculates the transmission rates.
+		/// </summary>
+		void RecalculateTransmissionRates();
 
 		/// <summary>
 		/// Finds the nearest relay.

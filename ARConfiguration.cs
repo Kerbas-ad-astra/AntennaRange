@@ -4,7 +4,10 @@
 // copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/3.0/
 
 using KSP;
+using KSP.UI.Screens;
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using ToadicusTools.Extensions;
 using ToadicusTools.Text;
 using ToadicusTools.GUIUtils;
@@ -30,6 +33,8 @@ namespace AntennaRange
 
 		private const string TRACKING_STATION_RANGES_KEY = "TRACKING_STATION_RANGES";
 		private const string RANGE_KEY = "range";
+
+		private const string USE_TOOLBAR_KEY = "useToolbarIfAvailable";
 
 		/// <summary>
 		/// Indicates whether connections require line of sight.
@@ -115,7 +120,19 @@ namespace AntennaRange
 			}
 		}
 
+		/// <summary>
+		/// Gets a value indicating whether we should use Toolbar if available.
+		/// </summary>
+		/// <value><c>true</c> if we should use Toolbar if available; otherwise, <c>false</c>.</value>
+		public static bool UseToolbarIfAvailable
+		{
+			get;
+			private set;
+		}
+
 #pragma warning disable 1591
+
+		private static MethodInfo partLoader_CompilePartInfo;
 
 		private bool showConfigWindow;
 		private Rect configWindowPos;
@@ -178,6 +195,8 @@ namespace AntennaRange
 			ARConfiguration.UpdateDelay = this.LoadConfigValue(UPDATE_DELAY_KEY, 16L);
 			this.updateDelayStr = ARConfiguration.UpdateDelay.ToString();
 
+			ARConfiguration.UseToolbarIfAvailable = this.LoadConfigValue(USE_TOOLBAR_KEY, true);
+
 			GameEvents.onGameSceneLoadRequested.Add(this.onSceneChangeRequested);
 			GameEvents.OnKSCFacilityUpgraded.Add(this.onFacilityUpgraded);
 
@@ -215,6 +234,16 @@ namespace AntennaRange
 					this.trackingStationRanges.SPrint());
 			}
 
+			if (partLoader_CompilePartInfo == null)
+			{
+				partLoader_CompilePartInfo = typeof(PartLoader).GetMethod(
+					"CompilePartInfo",
+					BindingFlags.NonPublic | BindingFlags.Instance
+				);
+
+				this.Log("Fetched PartLoader.CompilePartInfo: {0}", partLoader_CompilePartInfo);
+			}
+
 			this.runOnce = true;
 
 			this.LogDebug("Awake.");
@@ -230,17 +259,24 @@ namespace AntennaRange
 				this.runOnce = false;
 
 				this.SetKerbinRelayRange();
+				this.updateModuleInfos();
 			}
 		}
 
 		public void OnGUI()
 		{
 			// Only runs once, if the Toolbar is available.
-			if (ToolbarManager.ToolbarAvailable)
+			if (ToolbarManager.ToolbarAvailable && ARConfiguration.UseToolbarIfAvailable)
 			{
 				if (this.toolbarButton == null)
 				{
 					this.LogDebug("Toolbar available; initializing toolbar button.");
+
+					if (this.appLauncherButton != null)
+					{
+						ApplicationLauncher.Instance.RemoveModApplication(this.appLauncherButton);
+						this.appLauncherButton = null;
+					}
 
 					this.toolbarButton = ToolbarManager.Instance.add("AntennaRange", "ARConfiguration");
 					this.toolbarButton.Visibility = new GameScenesVisibility(GameScenes.SPACECENTER);
@@ -255,6 +291,12 @@ namespace AntennaRange
 			}
 			else if (this.appLauncherButton == null && ApplicationLauncher.Ready)
 			{
+				if (this.toolbarButton != null)
+				{
+					this.toolbarButton.Destroy();
+					this.toolbarButton = null;
+				}
+
 				this.LogDebug("Toolbar available; initializing AppLauncher button.");
 
 				this.appLauncherButton = ApplicationLauncher.Instance.AddModApplication(
@@ -325,6 +367,8 @@ namespace AntennaRange
 			{
 				ARConfiguration.FixedPowerCost = fixedPowerCost;
 				this.SaveConfigValue(FIXED_POWER_KEY, fixedPowerCost);
+
+				this.updateModuleInfos();
 			}
 
 			GUILayout.EndHorizontal();
@@ -336,6 +380,8 @@ namespace AntennaRange
 			{
 				ARConfiguration.UseAdditiveRanges = useAdditive;
 				this.SaveConfigValue(USE_ADDITIVE_KEY, useAdditive);
+
+				this.updateModuleInfos();
 			}
 
 			GUILayout.EndHorizontal();
@@ -347,6 +393,17 @@ namespace AntennaRange
 			{
 				ARConfiguration.PrettyLines = prettyLines;
 				this.SaveConfigValue(PRETTY_LINES_KEY, prettyLines);
+			}
+
+			GUILayout.EndHorizontal();
+
+			GUILayout.BeginHorizontal();
+
+			bool useToolbar = Layout.Toggle(ARConfiguration.UseToolbarIfAvailable, "Use Blizzy's Toolbar, if Available");
+			if (useToolbar != ARConfiguration.UseToolbarIfAvailable)
+			{
+				ARConfiguration.UseToolbarIfAvailable = useToolbar;
+				this.SaveConfigValue(USE_TOOLBAR_KEY, useToolbar);
 			}
 
 			GUILayout.EndHorizontal();
@@ -430,6 +487,92 @@ namespace AntennaRange
 			{
 				this.Log("Caught onFacilityUpgraded for {0} at level {1}", fac.id, lvl);
 				this.SetKerbinRelayRange();
+
+				this.updateModuleInfos();
+			}
+		}
+
+		private void updateModuleInfos()
+		{
+			if (PartLoader.Instance != null && PartLoader.Instance.parts != null)
+			{
+				this.Log("Updating module infos in PartLoader");
+				this.updateModuleInfos(PartLoader.Instance.parts);
+			}
+
+			if (RDTestSceneLoader.Instance != null && RDTestSceneLoader.Instance.partsList != null)
+			{
+				this.Log("Updating module infos in RDTestSceneLoader");
+				this.updateModuleInfos(RDTestSceneLoader.Instance.partsList);
+			}
+		}
+
+		private void updateModuleInfos(List<AvailablePart> partsList)
+		{
+			if (partLoader_CompilePartInfo == null)
+			{
+				this.LogError("Cannot recompile part info; partLoader_CompilePartInfo not found.");
+				return;
+			}
+
+			if (PartLoader.Instance == null)
+			{
+				this.LogError("Cannot recompile part info; PartLoader.Instance is null.");
+				return;
+			}
+
+			// We need to go find all of the prefabs and update them, because Squad broke IModuleInfo.
+			AvailablePart availablePart;
+			Part partPrefab;
+			PartModule modulePrefab;
+			object[] compileArgs = new object[2];
+
+			this.Log("Updating module infos...");
+
+			for (int apIdx = 0; apIdx < partsList.Count; apIdx++)
+			{
+				availablePart = partsList[apIdx];
+
+				if (availablePart == null)
+				{
+					continue;
+				}
+
+				partPrefab = availablePart.partPrefab;
+
+				if (partPrefab == null || partPrefab.Modules == null)
+				{
+					continue;
+				}
+
+				for (int pmIdx = 0; pmIdx < partPrefab.Modules.Count; pmIdx++)
+				{
+					modulePrefab = partPrefab.Modules[pmIdx];
+
+					if (modulePrefab == null)
+					{
+						continue;
+					}
+
+					if (modulePrefab is IAntennaRelay)
+					{
+						this.Log("Found prefab IAntennaRelay {0}", modulePrefab);
+
+						this.Log("Recompiling part and module info for {0}", availablePart.name);
+
+						availablePart.moduleInfos.Clear();
+						availablePart.resourceInfos.Clear();
+
+						compileArgs[0] = availablePart;
+						compileArgs[1] = partPrefab;
+                        if (PartLoader.Instance != null)
+                            partLoader_CompilePartInfo.Invoke(PartLoader.Instance, compileArgs);
+                        else
+                            this.Log("PartLoader.Instance is null");
+
+						break;
+					}
+				}
 			}
 		}
 
